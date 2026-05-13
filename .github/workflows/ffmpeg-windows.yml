@@ -34,13 +34,8 @@ jobs:
           mingw-w64-x86_64-x264
           mingw-w64-x86_64-x265
 
-    - name: Fetch FFmpeg Source
-      run: |
-        git clone --depth 1 ffmpeg.org ffmpeg-src
-
     - name: Configure and Build FFmpeg
       run: |
-        cd ffmpeg-src
         ./configure \
           --prefix="../ffmpeg-build" \
           --arch=x86_64 \
