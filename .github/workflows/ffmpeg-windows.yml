@@ -66,4 +66,4 @@ jobs:
         name: FFmpeg Release Candidate ${{ github.ref_name }}
         tag_name: ${{ github.ref }}
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.FFMPEG_RELEASE_TOKEN }}
