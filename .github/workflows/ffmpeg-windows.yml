@@ -37,7 +37,7 @@ jobs:
     - name: Configure and Build FFmpeg
       run: |
         ./configure \
-          --prefix="../ffmpeg-build" \
+          --prefix="ffmpeg-build" \
           --arch=x86_64 \
           --target-os=mingw32 \
           --enable-gpl \
