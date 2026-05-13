@@ -1,0 +1,74 @@
+name: Build FFmpeg for Windows
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers on tags like v1.0.0, v2.1.0-rc1
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64
+        update: true
+        install: >-
+          git
+          make
+          pkg-config
+          mingw-w64-x86_64-toolchain
+          mingw-w64-x86_64-yasm
+          mingw-w64-x86_64-nasm
+          mingw-w64-x86_64-lame
+          mingw-w64-x86_64-opus
+          mingw-w64-x86_64-x264
+          mingw-w64-x86_64-x265
+
+    - name: Fetch FFmpeg Source
+      run: |
+        git clone --depth 1 ffmpeg.org ffmpeg-src
+
+    - name: Configure and Build FFmpeg
+      run: |
+        cd ffmpeg-src
+        ./configure \
+          --prefix="../ffmpeg-build" \
+          --arch=x86_64 \
+          --target-os=mingw32 \
+          --enable-gpl \
+          --enable-nonfree \
+          --enable-static \
+          --disable-shared \
+          --enable-libx264 \
+          --enable-libx265 \
+          --enable-libmp3lame \
+          --enable-libopus \
+          --extra-libs="-lshlwapi"
+        make -j$(nproc)
+        make install
+
+    - name: Archive Build Artifacts
+      shell: bash
+      run: |
+        cd ffmpeg-build
+        tar -czvf ../ffmpeg-windows-x64.tar.gz bin/ include/ lib/ share/
+
+    - name: Create Release Candidate
+      uses: softprops/action-gh-release@v2
+      with:
+        files: ffmpeg-windows-x64.tar.gz
+        prerelease: true
+        name: FFmpeg Release Candidate ${{ github.ref_name }}
+        tag_name: ${{ github.ref }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
