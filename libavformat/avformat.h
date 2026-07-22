@@ -357,11 +357,23 @@ struct AVFrame;
  * -  Several modifiers can be applied to the tag name. This is done by
  *    appending a dash character ('-') and the modifier name in the order
  *    they appear in the list below -- e.g. foo-eng-sort, not foo-sort-eng.
+ *    -  descriptor -- some formats (e.g. ID3v2 COMM and USLT frames) attach
+ *       a free-form descriptor to a tag to distinguish multiple instances.
+ *       The full key format is "<tag>-<descriptor>-<lang>", but either
+ *       component may be absent. When writing, the last dash-separated suffix
+ *       is interpreted as a language code if it is a valid ISO 639-2/B code;
+ *       otherwise the entire portion after the first dash is treated as a
+ *       descriptor. Examples: "comment-eng" (lang only),
+ *       "comment-MusicMatch_Bio-eng" (descriptor + lang),
+ *       "comment-foobar" (descriptor only, foobar is not a valid lang code).
  *    -  language -- a tag whose value is localized for a particular language
  *       is appended with the ISO 639-2/B 3-letter language code.
  *       For example: Author-ger=Michael, Author-eng=Mike
  *       The original/default language is in the unqualified "Author" tag.
  *       A demuxer should set a default if it sets any translated tag.
+ *       When a language is required by the format but not specified in the key
+ *       (e.g. ID3v2 COMM and USLT frames), the default is left to the
+ *       underlying implementation (ID3v2 defaults to "und").
  *    -  sorting  -- a modified version of a tag that should be used for
  *       sorting will have '-sort' appended. E.g. artist="The Beatles",
  *       artist-sort="Beatles, The".
@@ -381,11 +393,15 @@ struct AVFrame;
                  e.g. "Various Artists" for compilation albums.
  artist       -- main creator of the work
  comment      -- any additional description of the file.
+                 ID3v2 COMM frames: bare "comment" has no lang or descriptor;
+                 "comment-<lang>" for lang only; "comment-<descriptor>-<lang>"
+                 for both (see descriptor modifier above).
  composer     -- who composed the work, if different from artist.
  copyright    -- name of copyright holder.
  creation_time-- date when the file was created, preferably in ISO 8601.
  date         -- date when the work was created, preferably in ISO 8601.
  disc         -- number of a subset, e.g. disc in a multi-disc collection.
+ disc_subtitle-- title of a subset, e.g. disc subtitle in a multi-disc collection.
  encoder      -- name/settings of the software/hardware that produced the file.
  encoded_by   -- person/group who created the file.
  filename     -- original name of the file.
@@ -393,6 +409,10 @@ struct AVFrame;
  language     -- main language in which the work is performed, preferably
                  in ISO 639-2 format. Multiple languages can be specified by
                  separating them with commas.
+ lyrics       -- lyrics for the work.
+                 ID3v2 USLT frames: bare "lyrics" has no lang or descriptor;
+                 "lyrics-<lang>" for lang only; "lyrics-<descriptor>-<lang>"
+                 for both (see descriptor modifier above).
  performer    -- artist who performed the work, if different from artist.
                  E.g for "Also sprach Zarathustra", artist would be "Richard
                  Strauss" and performer "London Philharmonic Orchestra".
@@ -1064,19 +1084,32 @@ typedef struct AVStreamGroupTileGrid {
 } AVStreamGroupTileGrid;
 
 /**
- * AVStreamGroupLCEVC is meant to define the relation between video streams
- * and a data stream containing LCEVC enhancement layer NALUs.
+ * AVStreamGroupLayeredVideo is meant to define the relation between a base
+ * layer video stream and a separate enhancement layer stream that together
+ * form a single layered video presentation (for example a video stream and a
+ * data stream containing LCEVC enhancement layer NALUs, or Dolby Vision
+ * Profile 7 dual-layer encoding).
  *
- * No more than one stream of
- * @ref AVCodecParameters.codec_id "codec_id" AV_CODEC_ID_LCEVC shall be present.
+ * The enhancement layer stream is identified by @ref el_index.
  */
-typedef struct AVStreamGroupLCEVC {
+typedef struct AVStreamGroupLayeredVideo {
     const AVClass *av_class;
 
     /**
-     * Index of the LCEVC data stream in AVStreamGroup.
+     * Index of the enhancement layer stream in AVStreamGroup.
      */
-    unsigned int lcevc_index;
+#if FF_API_LCEVC_STRUCT
+    union {
+#endif
+        unsigned int el_index;
+#if FF_API_LCEVC_STRUCT
+        /**
+         * Alias for @ref el_index, kept for backward compatibility.
+         */
+        attribute_deprecated
+        unsigned int lcevc_index;
+    };
+#endif
     /**
      * Width of the final stream for presentation.
      */
@@ -1085,7 +1118,16 @@ typedef struct AVStreamGroupLCEVC {
      * Height of the final image for presentation.
      */
     int height;
-} AVStreamGroupLCEVC;
+} AVStreamGroupLayeredVideo;
+
+#if FF_API_LCEVC_STRUCT
+/**
+ * Alias kept for backward compatibility.
+ *
+ * AVStreamGroupLCEVC was renamed to @ref AVStreamGroupLayeredVideo.
+ */
+#define AVStreamGroupLCEVC AVStreamGroupLayeredVideo
+#endif
 
 /**
  * AVStreamGroupTREF is meant to define the relation between video, audio,
@@ -1110,6 +1152,7 @@ enum AVStreamGroupParamsType {
     AV_STREAM_GROUP_PARAMS_TILE_GRID,
     AV_STREAM_GROUP_PARAMS_LCEVC,
     AV_STREAM_GROUP_PARAMS_TREF,
+    AV_STREAM_GROUP_PARAMS_DOLBY_VISION,
 };
 
 struct AVIAMFAudioElement;
@@ -1151,7 +1194,14 @@ typedef struct AVStreamGroup {
         struct AVIAMFAudioElement *iamf_audio_element;
         struct AVIAMFMixPresentation *iamf_mix_presentation;
         struct AVStreamGroupTileGrid *tile_grid;
+        struct AVStreamGroupLayeredVideo *layered_video;
+#if FF_API_LCEVC_STRUCT
+        /**
+         * deprecated, use layered_video.
+         */
+        attribute_deprecated
         struct AVStreamGroupLCEVC *lcevc;
+#endif
         struct AVStreamGroupTREF *tref;
     } params;
 
@@ -1558,8 +1608,12 @@ typedef struct AVFormatContext {
      * Flags to enable debugging.
      */
     int debug;
-#define FF_FDEBUG_TS        0x0001
-#define FF_FDEBUG_ID3V2     0x0002
+#define AV_FDEBUG_TS        0x0001
+#define AV_FDEBUG_ID3V2     0x0002
+
+#if FF_API_FDEBUG_TS
+#define FF_FDEBUG_TS AV_FDEBUG_TS
+#endif
 
     /**
      * The maximum number of streams.
@@ -1909,6 +1963,15 @@ typedef struct AVFormatContext {
      * Name of this format context, only used for logging purposes.
      */
     char *name;
+
+    /**
+     * Depth recursion limit,
+     *
+     * The maximum recursion depth that a Demuxer can open a Demuxer within itself.
+     *
+     * - demuxing: Set by user
+     */
+    int recursion_limit;
 } AVFormatContext;
 
 /**
@@ -3149,32 +3212,6 @@ int avformat_match_stream_specifier(AVFormatContext *s, AVStream *st,
                                     const char *spec);
 
 int avformat_queue_attached_pictures(AVFormatContext *s);
-
-#if FF_API_INTERNAL_TIMING
-enum AVTimebaseSource {
-    AVFMT_TBCF_AUTO = -1,
-    AVFMT_TBCF_DECODER,
-    AVFMT_TBCF_DEMUXER,
-#if FF_API_R_FRAME_RATE
-    AVFMT_TBCF_R_FRAMERATE,
-#endif
-};
-
-/**
- * @deprecated do not call this function
- */
-attribute_deprecated
-int avformat_transfer_internal_stream_timing_info(const AVOutputFormat *ofmt,
-                                                  AVStream *ost, const AVStream *ist,
-                                                  enum AVTimebaseSource copy_tb);
-
-/**
- * @deprecated do not call this function
- */
-attribute_deprecated
-AVRational av_stream_get_codec_timebase(const AVStream *st);
-#endif
-
 
 /**
  * @}

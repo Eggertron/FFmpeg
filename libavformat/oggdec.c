@@ -48,7 +48,6 @@ static const struct ogg_codec * const ogg_codecs[] = {
     &ff_vorbis_codec,
     &ff_theora_codec,
     &ff_flac_codec,
-    &ff_celt_codec,
     &ff_opus_codec,
     &ff_vp8_codec,
     &ff_old_dirac_codec,
@@ -572,6 +571,9 @@ static int ogg_packet(AVFormatContext *s, int *sid, int *dstart, int *dsize,
 
     ogg->curidx    = idx;
     os->incomplete = 0;
+
+    // the packet started at the first segment of the page it completes on
+    os->page_start = segp == 0;
 
     if (os->header) {
         if ((ret = os->codec->header(s, idx)) < 0) {

@@ -214,14 +214,13 @@ static int apv_decode_tile_component(AVCodecContext *avctx, void *data,
 {
     APVRawFrame                      *input = data;
     APVDecodeContext                   *apv = avctx->priv_data;
-    const CodedBitstreamAPVContext *apv_cbc = apv->cbc->priv_data;
     const APVDerivedTileInfo     *tile_info = &apv->tile_info;
-
-    int tile_index = job / apv_cbc->num_comp;
-    int comp_index = job % apv_cbc->num_comp;
-
     const AVPixFmtDescriptor *pix_fmt_desc =
         av_pix_fmt_desc_get(apv->pix_fmt);
+    int nb_components = pix_fmt_desc->nb_components;
+
+    int tile_index = job / nb_components;
+    int comp_index = job % nb_components;
 
     int sub_w_shift = comp_index == 0 ? 0 : pix_fmt_desc->log2_chroma_w;
     int sub_h_shift = comp_index == 0 ? 0 : pix_fmt_desc->log2_chroma_h;
@@ -272,7 +271,7 @@ static int apv_decode_tile_component(AVCodecContext *avctx, void *data,
         int qp = tile->tile_header.tile_qp[comp_index];
         int level_scale = apv_level_scale[qp % 6];
 
-        bit_depth = apv_cbc->bit_depth;
+        bit_depth = input->frame_header.frame_info.bit_depth_minus8 + 8;
         qp_shift  = qp / 6;
 
         for (int y = 0; y < 8; y++) {
@@ -385,11 +384,15 @@ static int apv_decode(AVCodecContext *avctx, AVFrame *output,
     apv_derive_tile_info(tile_info, &input->frame_header);
 
     if (avctx->hwaccel) {
-        const FFHWAccel *hwaccel = ffhwaccel(avctx->hwaccel);
-
         err = ff_hwaccel_frame_priv_alloc(avctx, &apv->hwaccel_picture_private);
         if (err < 0)
             return err;
+    }
+
+    ff_thread_finish_setup(avctx);
+
+    if (avctx->hwaccel) {
+        const FFHWAccel *hwaccel = ffhwaccel(avctx->hwaccel);
 
         err = hwaccel->start_frame(avctx, apv->pkt->buf,
                                    apv->pkt->data, apv->pkt->size);
@@ -591,6 +594,18 @@ static int apv_receive_frame(AVCodecContext *avctx, AVFrame *frame)
     return err;
 }
 
+#if HAVE_THREADS
+static int update_thread_context(AVCodecContext *dst, const AVCodecContext *src)
+{
+    APVDecodeContext *asrc = src->priv_data;
+    APVDecodeContext *adst = dst->priv_data;
+
+    adst->pix_fmt = asrc->pix_fmt;
+
+    return 0;
+}
+#endif
+
 const FFCodec ff_apv_decoder = {
     .p.name                = "apv",
     CODEC_LONG_NAME("Advanced Professional Video"),
@@ -601,6 +616,7 @@ const FFCodec ff_apv_decoder = {
     .flush                 = apv_decode_flush,
     .close                 = apv_decode_close,
     FF_CODEC_RECEIVE_FRAME_CB(apv_receive_frame),
+    UPDATE_THREAD_CONTEXT(update_thread_context),
     .p.capabilities        = AV_CODEC_CAP_DR1 |
                              AV_CODEC_CAP_SLICE_THREADS |
                              AV_CODEC_CAP_FRAME_THREADS,
